@@ -592,6 +592,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; same && i < list.size(); i++) {
             same = list.get(i).items.size() == rowList.get(i).items.size()
                     && Rows.key(list.get(i).items.get(0)).equals(Rows.key(rowList.get(i).items.get(0)));
+            // Continue watching changes in place: a new next episode is a new list.
+            for (int j = 0; same && j < list.get(i).items.size(); j++) {
+                same = list.get(i).items.get(j).next.equals(rowList.get(i).items.get(j).next);
+            }
         }
         if (!same) {
             rowList = list;
@@ -744,6 +748,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             posterFill.setColor(tone(0x14000000, 0x1FFFFFFF));
             c.drawRoundRect(posterRect, radius, radius, posterFill);
         }
+        if (it.progress > 0) {
+            // Continue watching: how much you've seen, a bar along the poster's bottom.
+            float inset = 14 * k, bar = 7 * k, y = posterRect.bottom - inset - bar;
+            float x0 = posterRect.left + inset, x1 = posterRect.right - inset;
+            posterFill.setColor(0x99000000);
+            c.drawRoundRect(x0, y, x1, y + bar, bar / 2, bar / 2, posterFill);
+            posterFill.setColor(WHITE);
+            c.drawRoundRect(x0, y, x0 + Math.max(bar, (x1 - x0) * it.progress), y + bar, bar / 2, bar / 2, posterFill);
+        }
         if (f > 0.01f) {
             rim.setColor(Ui.alpha(0xFFFFFFFF, 0.9f * f));
             c.drawRoundRect(posterRect, radius, radius, rim);
@@ -755,7 +768,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             String title = TextUtils.ellipsize(it.title, posterTitle, room, TextUtils.TruncateAt.END).toString();
             c.drawText(title, posterRect.left, base, posterTitle);
             String year = it.date.length() >= 4 ? it.date.substring(0, 4) : "";
-            String meta = (it.app == null ? "" : it.app) + (year.isEmpty() ? "" : " · " + year)
+            String meta = !it.next.isEmpty()
+                    ? Ui.trf("Next: {episode}", "episode", it.next) + (it.app == null || it.app.isEmpty() ? "" : " · " + it.app)
+                    : (it.app == null ? "" : it.app) + (year.isEmpty() ? "" : " · " + year)
                     + (it.vote > 0 ? String.format(java.util.Locale.ROOT, " · ★ %.1f", it.vote) : "");
             c.drawText(meta, posterRect.left, base + 32 * k, posterMeta);
             // The synopsis, up to three lines, kept on screen even for a poster near the right edge.
@@ -2707,7 +2722,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             r = focusedCell;
         } else if (zone == Z_ROWS) {
             Rows.Item p = focusedPoster();
-            if (p == null || p.pkg == null) return;
+            if (p == null) return;
+            if (p.pkg == null || p.pkg.isEmpty()) {   // Continue watching: a show on none of the TV's apps
+                showToast(Ui.tr("This show isn't on any of your TV's apps."));
+                return;
+            }
             // The title's own page in its app (Watchmode, looked up once and remembered), else the app's home.
             RectF from = posterBounds(rowIndex, rowCol[rowIndex], new RectF());
             click.open();

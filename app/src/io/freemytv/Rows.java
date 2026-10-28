@@ -37,6 +37,8 @@ final class Rows {
     static final class Item {
         int id;
         String kind, title, poster, pkg, app, service, date = "", overview = "";
+        String next = "";   // Continue watching: the next episode ("S2 E5"), else empty
+        float progress;     // Continue watching: how much of what aired you've seen, 0 to 1
         double popularity, vote;
         int votes;
     }
@@ -75,6 +77,11 @@ final class Rows {
     private volatile long at;
     private volatile boolean fetching;
     private volatile long failedAt;
+    // Continue watching (Trakt): fresher than the other rows, fetched on its own.
+    private static final long WATCHING_EVERY = 15 * 60_000L;
+    private volatile List<Item> watching = new ArrayList<>();
+    private volatile long watchingAt, watchingFailedAt;
+    private volatile boolean fetchingWatching;
 
     private Rows(Context c) {
         context = c;
@@ -84,6 +91,12 @@ final class Rows {
             String saved = cache.getString("rows", null);
             if (saved != null && Ui.language.equals(cache.getString("language", ""))) rows = parse(new JSONArray(saved));
             at = cache.getLong("at", 0);
+            // The saved shows show at once; a new start (or an update) fetches them again right away.
+            String w = cache.getString("watching", null);
+            if (w != null && Ui.language.equals(cache.getString("watchingLanguage", ""))) {
+                List<Row> one = parse(new JSONArray(w));
+                if (!one.isEmpty()) watching = one.get(0).items;
+            }
         } catch (Exception ignored) {
         }
     }
@@ -97,6 +110,14 @@ final class Rows {
         if (!Recs.hasKey(context)) return out;
         Recs recs = Recs.get(context);
         Map<String, Boolean> have = new LinkedHashMap<>();
+        // Continue watching first; a show on none of the TV's apps stays there too (OK does nothing on it).
+        List<Item> mine = watching;
+        if (!mine.isEmpty() && Trakt.connected(context)) {
+            Row r = new Row();
+            r.title = Ui.tr("Continue watching");
+            for (Item it : mine) if (it.pkg == null || it.pkg.isEmpty() || have.computeIfAbsent(it.pkg, recs::installed)) r.items.add(it);
+            if (!r.items.isEmpty()) out.add(r);
+        }
         for (Row r : rows) {
             Row copy = new Row();
             copy.title = r.title;
@@ -107,7 +128,9 @@ final class Rows {
     }
 
     void refreshIfStale() {
-        if (!Recs.hasKey(context) || fetching) return;
+        if (!Recs.hasKey(context)) return;
+        refreshWatching();
+        if (fetching) return;
         long now = System.currentTimeMillis();
         if (failedAt != 0 && now - failedAt >= 0 && now - failedAt < 10 * 60_000L) return;
         if (!rows.isEmpty() && now - at < EVERY && now >= at && Ui.language.equals(cache.getString("language", ""))) return;
@@ -129,6 +152,86 @@ final class Rows {
                 notifyListeners();
             }
         });
+    }
+
+    // MARK: - Continue watching (Trakt)
+
+    private void refreshWatching() {
+        if (!Trakt.connected(context)) {
+            if (!watching.isEmpty()) {
+                watching = new ArrayList<>();
+                notifyListeners();
+            }
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (fetchingWatching || (watchingFailedAt != 0 && now - watchingFailedAt >= 0 && now - watchingFailedAt < 10 * 60_000L)) return;
+        if (!watching.isEmpty() && now - watchingAt < WATCHING_EVERY && now >= watchingAt) return;
+        fetchingWatching = true;
+        io.execute(() -> {
+            try {
+                List<Item> list = new ArrayList<>();
+                for (Trakt.Watching w : Trakt.watching(context, PER_ROW)) {
+                    try {
+                        list.add(watchingItem(w));
+                    } catch (Exception e) {
+                        AppLog.w("rows: continue watching: " + e.getMessage());
+                    }
+                }
+                watching = list;
+                watchingAt = System.currentTimeMillis();
+                watchingFailedAt = 0;
+                Row one = new Row();
+                one.items.addAll(list);
+                List<Row> wrap = new ArrayList<>();
+                wrap.add(one);
+                cache.edit().putString("watching", toJson(wrap).toString())
+                        .putString("watchingLanguage", Ui.language).apply();
+                AppLog.w("trakt: " + list.size() + " shows to continue");
+            } catch (Exception e) {
+                watchingFailedAt = System.currentTimeMillis();
+                AppLog.w("rows: continue watching: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            } finally {
+                fetchingWatching = false;
+                notifyListeners();
+            }
+        });
+    }
+
+    /** A show from Trakt as a poster: TMDB's poster and where it streams, the next episode's name and synopsis. */
+    private Item watchingItem(Trakt.Watching w) throws Exception {
+        Recs recs = Recs.get(context);
+        String lang = Recs.lang();
+        JSONObject o = recs.get("/tv/" + w.tmdb + "?language=" + lang + "&append_to_response=watch/providers");
+        Item it = new Item();
+        it.id = w.tmdb;
+        it.kind = "tv";
+        it.title = o.optString("name", "");
+        String poster = o.optString("poster_path", "");
+        it.poster = poster.isEmpty() || "null".equals(poster) ? null : poster;
+        it.next = Ui.trf("S{season} E{episode}", "season", w.season, "episode", w.number);
+        it.progress = w.aired > 0 ? Math.min(1f, w.completed / (float) w.aired) : 0;
+        it.app = "";
+        JSONObject wp = o.optJSONObject("watch/providers");
+        JSONObject here = wp == null || wp.optJSONObject("results") == null ? null : wp.optJSONObject("results").optJSONObject(Recs.REGION);
+        JSONArray flat = here == null ? null : here.optJSONArray("flatrate");
+        for (int i = 0; flat != null && i < flat.length() && it.pkg == null; i++) {
+            String[] s = recs.service(flat.getJSONObject(i).optString("provider_name"), flat.getJSONObject(i).optInt("provider_id"));
+            if (s != null && recs.installed(s[2])) {
+                it.pkg = s[2];
+                it.service = s[1];
+                it.app = Recs.serviceName(appOnly(s[1]));
+            }
+        }
+        // The episode in the TV's language: its name, then what it's about.
+        try {
+            JSONObject e = recs.get("/tv/" + w.tmdb + "/season/" + w.season + "/episode/" + w.number + "?language=" + lang);
+            String name = e.optString("name", "").trim(), about = e.optString("overview", "").trim();
+            it.overview = name.isEmpty() ? about : about.isEmpty() ? name : name + " — " + about;
+        } catch (Exception e) {
+            it.overview = "";
+        }
+        return it;
     }
 
     // MARK: - TMDB
@@ -243,7 +346,7 @@ final class Rows {
 
     /** The decoded poster, or null: loads it in the background and notifies when it's ready. */
     Bitmap poster(Item it) {
-        if (it.poster == null) return null;
+        if (it.poster == null || it.poster.isEmpty()) return null;
         Bitmap b = bitmaps.get(it.poster);
         if (b != null) return b;
         final String path = it.poster;
@@ -314,7 +417,8 @@ final class Rows {
             for (Item it : r.items) {
                 items.put(new JSONObject().put("id", it.id).put("kind", it.kind).put("title", it.title)
                         .put("poster", it.poster).put("pkg", it.pkg).put("app", it.app).put("date", it.date)
-                        .put("vote", it.vote).put("overview", it.overview).put("service", it.service));
+                        .put("vote", it.vote).put("overview", it.overview).put("service", it.service)
+                        .put("next", it.next).put("progress", it.progress));
             }
             a.put(new JSONObject().put("title", r.title).put("items", items));
         }
@@ -343,6 +447,8 @@ final class Rows {
                 it.vote = x.optDouble("vote", 0);
                 it.overview = x.optString("overview");
                 it.service = x.optString("service");
+                it.next = x.optString("next");
+                it.progress = (float) x.optDouble("progress", 0);
                 r.items.add(it);
             }
             out.add(r);

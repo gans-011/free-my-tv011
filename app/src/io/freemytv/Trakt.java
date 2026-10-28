@@ -111,6 +111,80 @@ final class Trakt {
         return out;
     }
 
+    /** A show you're watching: its next episode and how much of what aired you've seen. */
+    static final class Watching {
+        int tmdb, season, number, aired, completed;
+    }
+
+    /**
+     * The shows you're following: watched in the past year with an episode left, the most recently watched first, then
+     * your watchlist's; never one you dropped or hid from your progress on Trakt. Up to `max`. Not on the main thread.
+     */
+    static List<Watching> watching(Context c, int max) throws IOException {
+        List<Watching> out = new ArrayList<>();
+        try {
+            String token = token(c);
+            java.util.Set<Integer> skip = new java.util.HashSet<>();
+            for (String section : new String[] {"dropped", "progress_watched"}) hidden(section, token, skip);
+            JSONArray a = new JSONArray(get("/sync/watched/shows?extended=noseasons", token));
+            List<JSONObject> shows = new ArrayList<>();
+            for (int i = 0; i < a.length(); i++) shows.add(a.getJSONObject(i));
+            // ISO 8601 in UTC: the text sorts as the time does.
+            java.util.Collections.sort(shows, (x, y) -> y.optString("last_watched_at").compareTo(x.optString("last_watched_at")));
+            java.text.SimpleDateFormat iso = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.ROOT);
+            iso.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            String yearAgo = iso.format(new java.util.Date(System.currentTimeMillis() - 365L * 24 * 3600_000L));
+            List<JSONObject> candidates = new ArrayList<>();
+            for (JSONObject o : shows) {
+                if (o.optString("last_watched_at").compareTo(yearAgo) < 0) break;
+                candidates.add(o);
+            }
+            JSONArray list = new JSONArray(get("/sync/watchlist/shows?sort_by=added&sort_how=desc", token));
+            for (int i = 0; i < list.length(); i++) candidates.add(list.getJSONObject(i));
+            java.util.Set<Integer> seen = new java.util.HashSet<>();
+            for (JSONObject o : candidates) {
+                if (out.size() >= max) break;
+                JSONObject ids = o.optJSONObject("show") == null ? null : o.getJSONObject("show").optJSONObject("ids");
+                if (ids == null || ids.optInt("tmdb") <= 0 || skip.contains(ids.optInt("trakt")) || !seen.add(ids.optInt("trakt"))) continue;
+                JSONObject p = new JSONObject(get("/shows/" + ids.optInt("trakt") + "/progress/watched"
+                        + "?hidden=false&specials=false&count_specials=false", token));
+                JSONObject next = p.optJSONObject("next_episode");
+                if (next == null) continue;   // seen to the end (until a new episode airs)
+                Watching w = new Watching();
+                w.tmdb = ids.optInt("tmdb");
+                w.season = next.optInt("season");
+                w.number = next.optInt("number");
+                w.aired = p.optInt("aired");
+                w.completed = p.optInt("completed");
+                out.add(w);
+            }
+        } catch (HttpError e) {
+            if (e.code == 401) disconnect(c);
+            throw e;
+        } catch (org.json.JSONException e) {
+            throw new IOException("Trakt: unexpected answer");
+        }
+        return out;
+    }
+
+    /** Adds the Trakt ids of the shows in one of your hidden sections ("dropped", "progress_watched") to `out`. */
+    private static void hidden(String section, String token, java.util.Set<Integer> out) throws org.json.JSONException {
+        int before = out.size();
+        try {
+            for (int page = 1; page <= 10; page++) {
+                JSONArray a = new JSONArray(get("/users/hidden/" + section + "?type=show&limit=100&page=" + page, token));
+                for (int i = 0; i < a.length(); i++) {
+                    JSONObject show = a.getJSONObject(i).optJSONObject("show");
+                    if (show != null && show.optJSONObject("ids") != null) out.add(show.getJSONObject("ids").optInt("trakt"));
+                }
+                if (a.length() < 100) break;
+            }
+            AppLog.w("trakt: " + (out.size() - before) + " shows hidden in " + section);
+        } catch (IOException e) {
+            AppLog.w("trakt: hidden " + section + ": " + e.getMessage());   // a section this account or API lacks
+        }
+    }
+
     // MARK: - Tokens
 
     /** The access token, renewed with the refresh token a day before it runs out. */
