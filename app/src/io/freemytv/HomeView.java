@@ -60,7 +60,7 @@ import java.util.function.Consumer;
  * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
  * redraws what changed.
  */
-final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener {
+final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener, Rows.Listener {
     // tvOS grid (Human Interface Guidelines): content inside the safe area, 80 px from the sides and 60 from top and
     // bottom; 40 px between items; 7 columns of 217 px (the apps). The shelf glass extends 36 px past the tiles (the
     // same padding on all four sides) and the tile corners are concentric with it (glass radius = radius + padding).
@@ -102,14 +102,35 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static String[] tabs;
     private static int tabsGeneration = -1;
     private static final String[] TAB_KIND = {null, "movie", "tv"};
-    private static final int Z_TOP = 4, Z_CARDS = 5;
+    private static final int Z_TOP = 4, Z_CARDS = 5, Z_ROWS = 10;
+    private static final int ROWS_LAYER = 8;
 
     private final Activity activity;
     private final Scene scene = new Scene();
     private final HomeData data;
     private final Recs recs;
     private final NowPlaying.Watch playing;
+    private final Rows rowsData;
     private final Click click;
+
+    // Poster rows (↓ from the shelf, like the Apple TV app): everything above moves up out of the way and the rows
+    // scroll one at a time; the focused row keeps its title near the top. Measured in the 1920×1080 space.
+    private static final float ROWS_FIRST = 150, ROW_STEP = 610, POSTER_W = 220, POSTER_H = 330, POSTER_GAP = 34;
+    private static final float POSTER_RADIUS = 18, POSTER_GROW = 0.1f;
+    private List<Rows.Row> rowList = new ArrayList<>();
+    private final Spring rowsOpen = new Spring(0.5f, 0.92f, 0);
+    private final Spring rowScroll = new Spring(0.42f, 0.9f, 0);
+    private Spring[] rowSlide = new Spring[0];
+    private int[] rowCol = new int[0];
+    private final Spring posterFocus = new Spring(0.28f, 0.8f, 0);
+    private int rowIndex;
+    private boolean rowsShown, rowsDirty;
+    private final RectF posterRect = new RectF();
+    private final Paint posterPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final Paint posterFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final android.graphics.Matrix posterMatrix = new android.graphics.Matrix();
+    private Paint rowHeading, posterMeta;
+    private TextPaint posterTitle, posterOverview;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final SharedPreferences ui;
     private final TvInputManager tvInputs;
@@ -125,7 +146,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override public void hold(int id) { a11yHold(); }
     });
     private final RectF a11yRect = new RectF();
-    private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer;
+    private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer, rowsLayer;
     private int zone = Z_SHELF;
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
@@ -330,6 +351,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case PLATTER: drawPlatter(c); break;
                 case TILES: drawTiles(c); break;
                 case DRAWER: drawDrawer(c); break;
+                case ROWS_LAYER: drawRows(c); break;
                 case SHEET: drawSheet(c); break;
                 default: drawToast(c); break;
             }
@@ -377,6 +399,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         data = HomeData.get(a);
         recs = Recs.get(a);
         playing = new NowPlaying.Watch(a, this::onPlaying);
+        rowsData = Rows.get(a);
         click = new Click(a);
         shelfVisible = HomeApps.shelfVisible(a);
         ui = a.getSharedPreferences("home-ui", Context.MODE_PRIVATE);
@@ -390,19 +413,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         platter = new Layer(a, PLATTER);
         tiles = new Layer(a, TILES);
         drawerLayer = new Layer(a, DRAWER);
+        rowsLayer = new Layer(a, ROWS_LAYER);
         sheetLayer = new Layer(a, SHEET);
         toastLayer = new Layer(a, TOAST);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 8 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms).
-        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, sheetLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer}) {
+        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, rowsLayer, sheetLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
+        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, rowsLayer, sheetLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
         setContentDescription("Free My TV");
         drawerLayer.setVisibility(INVISIBLE);
+        rowsLayer.setVisibility(INVISIBLE);
         for (int i = 0; i < topFocus.length; i++) {
             topFocus[i] = new Spring(0.26f, 0.85f, 0);
             topRects[i] = new RectF();
@@ -445,8 +470,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lastStep = 0;
         data.addListener(this);
         recs.addListener(this);
+        rowsData.addListener(this);
         data.refreshIfStale();
         recs.refreshIfStale();
+        rowsData.refreshIfStale();
+        onRows();
         Photos.importInbox(getContext(), ownReady);   // photos a computer just sent
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
         handler.postDelayed(tick, 15_000);
@@ -484,6 +512,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         playing.stop();
         data.removeListener(this);
         recs.removeListener(this);
+        rowsData.removeListener(this);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
     }
 
@@ -501,12 +530,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         shelfIndex = 0;
         sheetOpen = false;
         drawerOpen = false;
+        rowsShown = false;
         if (animated) {
             sheet.target = 0;
             drawer.target = 0;
+            rowsOpen.target = 0;
         } else {
             sheet.snap(0);
             drawer.snap(0);
+            rowsOpen.snap(0);
         }
         if (pickIndex != 0 && !picks.isEmpty()) {
             pickIndex = 0;
@@ -554,6 +586,193 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         updatePicks();
     }
 
+    @Override public void onRows() {
+        List<Rows.Row> list = rowsData.rows();
+        boolean same = list.size() == rowList.size();
+        for (int i = 0; same && i < list.size(); i++) {
+            same = list.get(i).items.size() == rowList.get(i).items.size()
+                    && Rows.key(list.get(i).items.get(0)).equals(Rows.key(rowList.get(i).items.get(0)));
+        }
+        if (!same) {
+            rowList = list;
+            if (rowSlide.length != list.size()) {
+                rowSlide = new Spring[list.size()];
+                for (int i = 0; i < rowSlide.length; i++) rowSlide[i] = new Spring(0.4f, 0.9f, 0);
+                rowCol = new int[list.size()];
+            }
+            for (int i = 0; i < rowCol.length; i++) rowCol[i] = Math.min(rowCol[i], list.get(i).items.size() - 1);
+            rowIndex = Math.min(rowIndex, Math.max(0, list.size() - 1));
+            if (list.isEmpty() && zone == Z_ROWS) closeRows();
+        }
+        rowsDirty = true;
+        wake();
+    }
+
+    // MARK: - Poster rows
+
+    private void openRows() {
+        if (rowList.isEmpty()) return;
+        rowsShown = true;
+        zone = Z_ROWS;
+        rowIndex = 0;
+        rowScroll.snap(0);
+        aimRows();
+        rowsOpen.target = 1;
+        posterFocus.snap(0);
+        posterFocus.target = 1;
+        motionDirty = rowsDirty = true;
+        retarget(false);
+    }
+
+    private void closeRows() {
+        rowsShown = false;
+        zone = Z_SHELF;
+        rowsOpen.target = 0;
+        posterFocus.target = 0;
+        motionDirty = rowsDirty = true;
+        retarget(false);
+    }
+
+    /** ←/→ along the row, ↑/↓ between rows (↑ on the first goes back to the shelf, ↓ on the last to the drawer). */
+    private boolean moveRows(int dx, int dy) {
+        if (rowList.isEmpty()) {
+            closeRows();
+            return true;
+        }
+        if (dx != 0) {
+            int n = rowList.get(rowIndex).items.size();
+            int next = Math.max(0, Math.min(n - 1, rowCol[rowIndex] + dx));
+            if (next == rowCol[rowIndex]) return false;
+            rowCol[rowIndex] = next;
+        } else if (dy < 0) {
+            if (rowIndex == 0) {
+                closeRows();
+                return true;
+            }
+            rowIndex--;
+        } else {
+            if (rowIndex == rowList.size() - 1) {
+                if (drawerItems.isEmpty()) return false;
+                rowsShown = false;
+                rowsOpen.target = 0;
+                motionDirty = true;
+                openDrawer();
+                retarget(false);
+                return true;
+            }
+            rowIndex++;
+        }
+        aimRows();
+        posterFocus.snap(0.35f);
+        posterFocus.target = 1;
+        rowsDirty = true;
+        return true;
+    }
+
+    private void aimRows() {
+        rowScroll.target = rowIndex * ROW_STEP;
+        float step = POSTER_W + POSTER_GAP, room = CONTENT_R - MARGIN;
+        for (int i = 0; i < rowSlide.length; i++) {
+            int n = rowList.get(i).items.size();
+            float max = Math.max(0, n * step - POSTER_GAP - room);
+            // The focused poster stays in the first columns while the row slides, like tvOS.
+            rowSlide[i].target = Math.min(max, Math.max(0, (rowCol[i] - 2) * step));
+        }
+    }
+
+    private Rows.Item focusedPoster() {
+        if (rowIndex >= rowList.size()) return null;
+        List<Rows.Item> items = rowList.get(rowIndex).items;
+        return rowCol[rowIndex] < items.size() ? items.get(rowCol[rowIndex]) : null;
+    }
+
+    /** Where a poster rests on the screen (without the focus growth). */
+    private RectF posterBounds(int row, int col, RectF out) {
+        float top = (ROWS_FIRST + row * ROW_STEP - rowScroll.value + 64) * k;
+        float left = (MARGIN + col * (POSTER_W + POSTER_GAP) - (row < rowSlide.length ? rowSlide[row].value : 0)) * k;
+        out.set(left, top, left + POSTER_W * k, top + POSTER_H * k);
+        return out;
+    }
+
+    private void drawRows(Canvas c) {
+        if (rowList.isEmpty()) return;
+        int ink = tone(L_INK, WHITE), dim = tone(L_DIM, 0xFF98989D);
+        rowHeading.setColor(ink);
+        posterTitle.setColor(ink);
+        posterMeta.setColor(dim);
+        posterOverview.setColor(dim);
+        float hFull = getHeight();
+        for (int r = 0; r < rowList.size(); r++) {
+            float rowTop = (ROWS_FIRST + r * ROW_STEP - rowScroll.value) * k;
+            if (rowTop > hFull || rowTop + ROW_STEP * k < 0) continue;
+            Rows.Row row = rowList.get(r);
+            c.drawText(row.title, MARGIN * k, rowTop + 38 * k, rowHeading);
+            int focusedCol = r == rowIndex && zone == Z_ROWS ? rowCol[r] : -1;
+            for (int i = 0; i < row.items.size(); i++) {
+                if (i == focusedCol) continue;
+                drawPoster(c, row.items.get(i), r, i, 0);
+            }
+            if (focusedCol >= 0) drawPoster(c, row.items.get(focusedCol), r, focusedCol, Ui.clamp(posterFocus.value));
+        }
+    }
+
+    private void drawPoster(Canvas c, Rows.Item it, int row, int col, float f) {
+        posterBounds(row, col, posterRect);
+        if (posterRect.right < 0 || posterRect.left > w) return;
+        float grow = 1 + POSTER_GROW * f;
+        float cx = posterRect.centerX(), cy = posterRect.centerY();
+        float hw = posterRect.width() / 2 * grow, hh = posterRect.height() / 2 * grow;
+        posterRect.set(cx - hw, cy - hh, cx + hw, cy + hh);
+        float radius = POSTER_RADIUS * k * grow;
+        // Shadow: a soft dark plate under the poster, deeper when focused (the poster "rises").
+        if (f > 0.01f) {
+            posterFill.setColor(Ui.alpha(0xFF000000, 0.16f * f * tone(0.6f, 1f)));
+            c.drawRoundRect(posterRect.left + 10 * k, posterRect.top + 8 * k * f, posterRect.right - 10 * k,
+                    posterRect.bottom + 10 * k * f, radius, radius, posterFill);
+        }
+        Bitmap b = rowsData.poster(it);
+        if (b != null) {
+            BitmapShader shader = new BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            float s = Math.max(posterRect.width() / b.getWidth(), posterRect.height() / b.getHeight());
+            posterMatrix.setScale(s, s);
+            posterMatrix.postTranslate(posterRect.centerX() - b.getWidth() * s / 2, posterRect.centerY() - b.getHeight() * s / 2);
+            shader.setLocalMatrix(posterMatrix);
+            posterPaint.setShader(shader);
+            c.drawRoundRect(posterRect, radius, radius, posterPaint);
+            posterPaint.setShader(null);
+        } else {
+            posterFill.setColor(tone(0x14000000, 0x1FFFFFFF));
+            c.drawRoundRect(posterRect, radius, radius, posterFill);
+        }
+        if (f > 0.01f) {
+            rim.setColor(Ui.alpha(0xFFFFFFFF, 0.9f * f));
+            c.drawRoundRect(posterRect, radius, radius, rim);
+            // Title and where it streams, under the focused poster.
+            float base = posterRect.bottom + 38 * k;
+            posterTitle.setAlpha(Math.round(255 * f));
+            posterMeta.setAlpha(Math.round(220 * f));
+            float room = Math.max(posterRect.width(), 420 * k);
+            String title = TextUtils.ellipsize(it.title, posterTitle, room, TextUtils.TruncateAt.END).toString();
+            c.drawText(title, posterRect.left, base, posterTitle);
+            String year = it.date.length() >= 4 ? it.date.substring(0, 4) : "";
+            String meta = (it.app == null ? "" : it.app) + (year.isEmpty() ? "" : " · " + year)
+                    + (it.vote > 0 ? String.format(java.util.Locale.ROOT, " · ★ %.1f", it.vote) : "");
+            c.drawText(meta, posterRect.left, base + 32 * k, posterMeta);
+            // The synopsis, up to three lines, kept on screen even for a poster near the right edge.
+            if (it.overview != null && !it.overview.isEmpty()) {
+                float width = 820 * k;
+                float x = Math.max(MARGIN * k, Math.min(posterRect.left, CONTENT_R * k - width));
+                posterOverview.setAlpha(Math.round(230 * f));
+                StaticLayout layout = StaticLayout.Builder.obtain(it.overview, 0, it.overview.length(), posterOverview, Math.round(width))
+                        .setMaxLines(3).setEllipsize(TextUtils.TruncateAt.END).setLineSpacing(4 * k, 1).build();
+                c.save();
+                c.translate(x, base + 50 * k);
+                layout.draw(c);
+                c.restore();
+            }
+        }
+    }
+
     private void invalidateAll() {
         for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer}) v.invalidate();
     }
@@ -571,6 +790,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         measure(platter, width, Math.round(320 * kk));
         measure(tiles, width, Math.round(270 * kk));
         measure(drawerLayer, width, Math.round(600 * kk));
+        measure(rowsLayer, width, height);
         measure(sheetLayer, width, height);
         measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
         setMeasuredDimension(width, height);
@@ -589,6 +809,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         place(platter, 0, Math.round(750 * kk));
         place(tiles, 0, Math.round(790 * kk));
         place(drawerLayer, 0, Math.round(470 * kk));
+        place(rowsLayer, 0, 0);
         sheetLayer.layout(0, 0, width, height);
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
@@ -639,6 +860,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardTitle = Ui.text(Ui.semibold, 31 * k, L_INK);
         lCardTitle.setLetterSpacing(0.012f);
         lCardMeta = Ui.text(Ui.medium, 25 * k, L_DIM);
+        rowHeading = Ui.text(Ui.semibold, 38 * k, L_INK);
+        posterTitle = new TextPaint(Ui.text(Ui.semibold, 25 * k, L_INK));
+        posterMeta = Ui.text(Ui.medium, 21 * k, L_DIM);
+        posterOverview = new TextPaint(Ui.text(Ui.regular, 22 * k, L_DIM));
         lQuote = Ui.numbers(Ui.regular, 21 * k, L_FAINT);
         lTip = Ui.text(Ui.semibold, 25 * k, L_INK);
         lTip.setTextAlign(Paint.Align.CENTER);
@@ -713,12 +938,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
         boolean drawerMoving = drawer.step(dt);
         boolean sheetMoving = sheet.step(dt);
+        boolean rowsMoving = rowsOpen.step(dt);
+        boolean rowsScrolling = rowScroll.step(dt) | step(rowSlide, dt) | posterFocus.step(dt);
+        if (rowsMoving) motionDirty = true;
+        if (rowsMoving || rowsScrolling || rowsDirty) rowsLayer.invalidate();
+        rowsDirty = false;
         boolean toastFading = tickToast(up);
         boolean heroFading = tickHeroFade(up);
         boolean bgFading = tickBackgroundFade(up);
         boolean nightMoving = tickNight(up);
 
         if (drawerMoving || sheetMoving || motionDirty) updateMotion();
+        if (rowsMoving) sky.invalidate();
         // Opening and closing the drawer only moves the cached layers: redrawing the glass on every frame made the TV
         // drop frames (measured: ~50 ms of GPU per frame). The app tiles have no glass; the top buttons fade out as
         // they rise; the drawer is drawn resting in place; the glass shelf is redrawn once the drawer stops, so the
@@ -745,7 +976,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Busy: something is moving, or the sheet or the drawer is open.
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
                 || sheetMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
-                || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
+                || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty()
+                || rowsMoving || rowsScrolling;
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
         else Choreographer.getInstance().postFrameCallbackDelayed(this, 1000);
@@ -768,13 +1000,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Drawer and sheet: the layers' positions and opacity (without redrawing their content). */
     private void updateMotion() {
         float d = drawer.value, dc = Ui.clamp(d), s = Ui.clamp(sheet.value);
-        float home = 1 - s, top = home * (1 - smoothstep(0, 0.32f, dc));
+        float ro = Ui.clamp(rowsOpen.value), away = 1 - smoothstep(0, 0.55f, ro);
+        float home = 1 - s, top = home * (1 - smoothstep(0, 0.32f, dc)) * away;
         float shift = SHIFT * k;
-        float lift = -d * shift;
+        float lift = -d * shift - rowsOpen.value * 900 * k;
         show(heroLayer, top, lift);
         show(status, top, lift);
-        show(platter, home, lift);
-        show(tiles, home, lift);
+        show(platter, home * away, lift);
+        show(tiles, home * away, lift);
+        float ra = home * smoothstep(0.15f, 0.8f, ro);
+        rowsLayer.setTranslationY((1 - rowsOpen.value) * 420 * k);
+        rowsLayer.setAlpha(ra);
+        rowsLayer.setVisibility(ra > 0.002f ? VISIBLE : INVISIBLE);
         float da = home * smoothstep(0.1f, 0.6f, dc);
         drawerLayer.setTranslationY((1 - d) * shift);
         drawerLayer.setAlpha(da);
@@ -2313,6 +2550,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void back() {
         if (sheetOpen) {
             closeSheet();
+        } else if (zone == Z_ROWS) {
+            closeRows();
         } else if (zone == Z_DRAWER || zone == WIDGETS) {
             closeDrawer();
             retarget(false);
@@ -2328,6 +2567,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void move(int dx, int dy) {
         if (sheetOpen) {
             moveGrid(dx, dy);
+            return;
+        }
+        if (zone == Z_ROWS) {
+            if (!moveRows(dx, dy)) return;
+            click.move();
+            return;
+        }
+        if (zone == Z_SHELF && dy > 0 && !rowList.isEmpty()) {
+            openRows();
+            click.move();
             return;
         }
         if (moveLight(dx, dy)) return;
@@ -2456,6 +2705,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (others.isEmpty()) return;
             it = others.get(gridIndex);
             r = focusedCell;
+        } else if (zone == Z_ROWS) {
+            Rows.Item p = focusedPoster();
+            if (p == null || p.pkg == null) return;
+            // The title's own page in its app (Watchmode, looked up once and remembered), else the app's home.
+            RectF from = posterBounds(rowIndex, rowCol[rowIndex], new RectF());
+            click.open();
+            LOADER.execute(() -> {
+                String link = p.service == null || p.service.isEmpty() ? null : recs.linkFor(p.kind, p.id, p.service, p.pkg);
+                handler.post(() -> {
+                    HomeApps.Item app = HomeApps.app(p.pkg, p.app, link);
+                    boolean opened = HomeApps.open(activity, app, this, Math.round(from.left), Math.round(from.top),
+                            Math.round(from.width()), Math.round(from.height()));
+                    if (!opened) showToast(Ui.trf("Couldn't open {app}.", "app", app.label));
+                });
+            });
+            return;
         } else if (zone == Z_HERO) {
             Recs.Pick p = currentPick();
             if (p == null || p.pkg == null) return;

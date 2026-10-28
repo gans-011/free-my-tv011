@@ -300,6 +300,11 @@
  "{n} min": "{n} min",
  "{n} min ago": "há {n} min",
  "{n} ms": "{n} ms",
+ "Trending on {service}": "Em alta na {service}",
+ "Popular movies": "Filmes populares",
+ "Popular shows": "Séries populares",
+ "New releases": "Lançamentos",
+ "Top rated": "Mais bem avaliados",
  "{time} left": "faltam {time}",
  "{version} is out: build it again": "Saiu a {version}: compile de novo",
  "← → to move · OK to drop · Back to cancel": "← → para mover · OK para soltar · Voltar para cancelar"

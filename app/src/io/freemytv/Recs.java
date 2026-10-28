@@ -579,7 +579,7 @@ final class Recs {
     }
 
     /** Language of titles and genres (TMDB's "fr-FR", "zh-CN"…); the services come from the region. */
-    private static String lang() {
+    static String lang() {
         String lang = Ui.language;
         if (lang.equals("en")) return "en-US";
         if (lang.equals("pt")) return "pt-BR";
@@ -627,6 +627,8 @@ final class Recs {
     }
 
     /** The date `offset` days from today, as "2026-10-19" (negative = in the past). */
+    static String dayString(int offset) { return day(offset); }
+
     private static String day(int offset) {
         Calendar cal = Calendar.getInstance();
         cal.add(Calendar.DAY_OF_YEAR, offset);
@@ -750,7 +752,7 @@ final class Recs {
     }
 
     /** The SERVICES row for a TMDB name: the installed one first, when a service has more than one package. */
-    private String[] service(String name, int providerId) {
+    String[] service(String name, int providerId) {
         String n = name.toLowerCase(Locale.ROOT);
         String[] first = null;
         // "HBO Max Amazon Channel", "Apple TV Amazon Channel"...: a subscription sold inside another app, not this one.
@@ -779,7 +781,7 @@ final class Recs {
      * The service's app is on the TV, and the person hasn't switched the service off (Home Settings > Picks from; the
      * hide_services line of config.properties is where those switches start: an app the TV ships without a subscription).
      */
-    private boolean installed(String pkg) {
+    boolean installed(String pkg) {
         for (String[] s : SERVICES) if (s[2].equals(pkg) && Prefs.serviceOff(s[1])) return false;
         return HomeApps.launchIntent(context.getPackageManager(), pkg) != null;
     }
@@ -805,6 +807,17 @@ final class Recs {
     private boolean linksOn() {
         String key = Config.WATCHMODE_KEY.trim();
         return !key.isEmpty() && cache.getInt("wm:refused", 0) != key.hashCode();
+    }
+
+    /** The title's own page in its app (Watchmode), or null; looks it up if needed, so not on the main thread. */
+    String linkFor(String kind, int id, String app, String pkg) {
+        Pick p = new Pick();
+        p.kind = kind;
+        p.id = id;
+        p.app = app;
+        p.pkg = pkg;
+        findLink(p);
+        return p.link;
     }
 
     /** Sets p.link from what was looked up before, or looks it up (2 requests of the free plan's 2,500 a month). */
@@ -860,7 +873,7 @@ final class Recs {
         }
     }
 
-    private JSONObject get(String path) throws IOException, org.json.JSONException {
+    JSONObject get(String path) throws IOException, org.json.JSONException {
         String key = key();
         if (key.isEmpty()) throw new IOException("no TMDB key");
         return request(path, key);
