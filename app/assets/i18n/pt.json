@@ -314,6 +314,7 @@
  "Continue watching": "Continue assistindo",
  "S{season} E{episode}": "T{season} E{episode}",
  "Next: {episode}": "Próximo: {episode}",
+ "Continue: {show} · {episode}": "Continue: {show} · {episode}",
  "This show isn't on any of your TV's apps.": "Esta série não está em nenhum app da sua TV.",
  "Trending on {service}": "Em alta na {service}",
  "Popular movies": "Filmes populares",

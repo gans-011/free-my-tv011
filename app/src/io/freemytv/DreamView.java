@@ -50,6 +50,12 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     private static final float MARGIN = 80, RIGHT = 1840, TITLE_W = 900, META_BASE = 1008;
     private static final float DATE_BASE = 92, CLOCK_TOP = 120, CLOCK_SIZE = 200, QUOTES_GAP = 52;
     private static final double DRIFT_PERIOD_S = 600;
+    /**
+     * This fork's default (screensaver_style=minimal): no photos, the clock over a near-black that follows the day
+     * (navy at night, a touch warmer around sunrise and sunset), with the date, the weather and your Trakt show.
+     */
+    private static final boolean MINIMAL = !"photos".equals(Config.SCREENSAVER_STYLE.trim());
+    private static final int NIGHT = 0xFF04060C, DAY = 0xFF0A0E15, GOLDEN = 0xFF150C0A;
     // The high and low and the stale prices line, made again only when they change (drawn on every frame).
     private String range = "", staleLine = "", staleFor = "";
     private HomeData.Weather rangeWeather;
@@ -145,7 +151,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             playing.start();   // the listener allowed after the screensaver started (a no-op once watching)
             data.refreshIfStale();
             recs.refreshIfStale();
-            recs.prefetchAll();
+            if (!MINIMAL) recs.prefetchAll();   // photos for the slides: none to show
             dirty = true;
             chromeDirty = true;
             prepareNext();
@@ -183,12 +189,12 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         startedAt = clock();
         lastFrame = 0;
         failed.clear();
-        fallback = photos().isEmpty();
+        fallback = MINIMAL || photos().isEmpty();
         data.addListener(this);
         recs.addListener(this);
         data.refreshIfStale();
         recs.refreshIfStale();
-        recs.prefetchAll();
+        if (!MINIMAL) recs.prefetchAll();
         Photos.importInbox(getContext(), () -> { if (running) prepareNext(); });
         prepareNext();
         handler.postDelayed(tick, 60_000);
@@ -287,7 +293,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
 
     /** Loads the next photo in the background (one at a time); once ready, it comes in at the right moment. */
     private void prepareNext() {
-        if (!running || decoding || prepared != null) return;
+        if (MINIMAL || !running || decoding || prepared != null) return;
         List<Recs.Pick> list = photos();
         if (list.isEmpty()) return;
         Slide last = incoming != null ? incoming : current;
@@ -801,11 +807,15 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
 
     private void drawFallback(Canvas canvas, long up, float alpha) {
         float t = (up - startedAt) / 1000f;
-        if (up - lastSky >= 100) {
-            lastSky = up;
-            scene.advance(timeOffset + t);
+        if (MINIMAL) {
+            canvas.drawColor(minimalBackground(System.currentTimeMillis()));
+        } else {
+            if (up - lastSky >= 100) {
+                lastSky = up;
+                scene.advance(timeOffset + t);
+            }
+            scene.drawBackground(canvas);
         }
-        scene.drawBackground(canvas);
         if (dirty) {
             Canvas rc = content.beginRecording(w, h);
             try {
@@ -855,11 +865,22 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             x += weatherPaint.measureText(now) + 18 * k;
             c.drawText(range, x, base, weatherDim);
         }
+        if (MINIMAL) {
+            // The show you're watching on Trakt (the first of Continue watching), quiet under the weather.
+            String show = continueLine();
+            if (!show.isEmpty()) {
+                fit.set(stalePaint);
+                fit.setTextSize(28 * k);
+                fit.setColor(0x80FFFFFF);
+                String cut = TextUtils.ellipsize(show, fit, w * 0.6f, TextUtils.TruncateAt.END).toString();
+                c.drawText(cut, cx, clockBase + 150 * k, fit);
+            }
+        }
 
-        // Prices near the bottom edge: small white logo + value, all four on one line.
+        // Prices near the bottom edge: small white logo + value, all four on one line (not in the minimal one).
         float cap = Ui.cap(quotePaint), spacing = 56 * k, gap = 10 * k;
         int[] coins = HomeData.active();
-        String[] values = new String[playingBottom != null ? 0 : HomeData.coinCount()];
+        String[] values = new String[playingBottom != null || MINIMAL ? 0 : HomeData.coinCount()];
         float total = spacing * (values.length - 1);
         if (playingBottom != null) {
             float bars = NowPlaying.barsWidth(bottomCap) + bottomCap * 0.6f;
@@ -886,5 +907,40 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             }
             c.drawText(staleLine, cx, base + 38 * k, stalePaint);
         }
+    }
+
+    // MARK: - Minimal
+
+    /** "Continue: The Pitt · S2 E3", the first show of Continue watching, or "" without Trakt. Once a minute. */
+    private String continueLine() {
+        if (!Trakt.connected(getContext())) return "";
+        for (Rows.Row r : Rows.get(getContext()).rows()) {
+            if (r.wide && !r.items.isEmpty()) {
+                Rows.Item it = r.items.get(0);
+                return Ui.trf("Continue: {show} · {episode}", "show", it.title, "episode", it.next);
+            }
+        }
+        return "";
+    }
+
+    /** Near-black that follows the day: navy at night, a little lighter by day, warmer an hour around sunrise and sunset. */
+    private int minimalBackground(long now) {
+        HomeData.Weather wx = data.weather;
+        if (wx.sunrise <= 0 || wx.sunset <= 0) return NIGHT;
+        float day = now > wx.sunrise && now < wx.sunset ? 1 : 0;
+        float golden = Math.max(near(now, wx.sunrise), near(now, wx.sunset));
+        return mix(mix(NIGHT, DAY, day), GOLDEN, golden);
+    }
+
+    /** 1 at `at`, down to 0 an hour before or after. */
+    private static float near(long now, long at) {
+        return Math.max(0, 1 - Math.abs(now - at) / 3_600_000f);
+    }
+
+    private static int mix(int a, int b, float t) {
+        int r = Math.round(((a >> 16) & 0xFF) + (((b >> 16) & 0xFF) - ((a >> 16) & 0xFF)) * t);
+        int g = Math.round(((a >> 8) & 0xFF) + (((b >> 8) & 0xFF) - ((a >> 8) & 0xFF)) * t);
+        int bl = Math.round((a & 0xFF) + ((b & 0xFF) - (a & 0xFF)) * t);
+        return 0xFF000000 | (r << 16) | (g << 8) | bl;
     }
 }

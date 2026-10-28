@@ -30,6 +30,7 @@ Tudo o que o Free My TV original faz continua aqui. A novidade:
 - Precisa da [chave do TMDB](#a-chave-do-tmdb) (grátis). Sem ela, a tela inicial funciona normalmente, só sem as fileiras.
 - **Indicações do seu Trakt.** Com a sua conta do [Trakt](https://trakt.tv) conectada, a aba *Para você* (Explorar, Filmes e Séries) mostra o que o Trakt recomenda para você, a partir do que você assistiu e avaliou, em vez do que está em alta. Continuam aparecendo só títulos dos seus apps. Veja [Conectar o Trakt](#conectar-o-trakt).
 - **Continue assistindo.** Com o Trakt conectado, a primeira fileira de pôsteres mostra o seu *Up Next* do Trakt, as mesmas séries e na mesma ordem do site, com uma barrinha de quanto você já viu. No pôster selecionado aparece *Próximo: T2 E5* e o resumo do episódio. Séries que você abandonou (*Drop*) ou ocultou no Trakt não aparecem. Atualiza a cada 15 minutos.
+- **Tela de descanso minimalista.** Fundo quase preto que acompanha o dia (azul-marinho à noite, mais quente no nascer e no pôr do sol), o relógio grande no centro, a data, o clima e a série que você está vendo no Trakt. Tudo se move um pouco a cada poucos minutos para não marcar a tela. Quem preferir as fotos das indicações coloca `screensaver_style=photos` no `config.properties`.
 
 E o que já vinha do original:
 
