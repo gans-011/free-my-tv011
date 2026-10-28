@@ -70,7 +70,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 5;
+    private static final int CACHE_VERSION = 6;   // 6: Trakt picks (this fork)
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
@@ -566,9 +566,25 @@ final class Recs {
         } else if (!Config.PLEX_URL.trim().isEmpty()) {
             AppLog.w("plex: plex_url must be an https://….plex.direct address (and plex_token set): ignored");
         }
-        // Trending first, then the new releases; movies and shows alternating, without repeats, up to 24.
+        // Trending first, then the new releases; movies and shows alternating, without repeats, up to 24. With Trakt
+        // connected, its recommendations for you come first, and the others only fill a short list.
         List<Pick> list = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
+        if (Trakt.connected(context)) {
+            try {
+                List<Pick> forMovies = traktPicks("movie"), forShows = traktPicks("tv");
+                AppLog.w("trakt: " + forMovies.size() + " movies and " + forShows.size() + " shows for you on the TV's services");
+                alternate(list, seen, forMovies, forShows, 24);
+            } catch (Exception e) {
+                AppLog.w("trakt: " + e.getMessage());
+            }
+        }
+        if (list.size() >= 12) {
+            hotMovies.clear();
+            hotShows.clear();
+            newMovies.clear();
+            newShows.clear();
+        }
         alternate(list, seen, hotMovies, hotShows, 24);
         alternate(list, seen, newMovies, newShows, 24);
         if (list.isEmpty()) throw new IOException("TMDB returned no recommendations");
@@ -587,6 +603,25 @@ final class Recs {
         if (lang.equals("de")) return "de-DE";   // TMDB's de-AT and de-CH have few translations of their own
         if (lang.indexOf('-') > 0) return lang;
         return lang + "-" + Ui.locale().getCountry();
+    }
+
+    /** Trakt's recommendations of one kind that are on one of the TV's services, with their details, up to 12. */
+    private List<Pick> traktPicks(String kind) throws Exception {
+        List<Pick> out = new ArrayList<>();
+        for (int id : Trakt.recommended(context, kind)) {
+            if (out.size() >= 12) break;
+            Pick p = new Pick();
+            p.id = id;
+            p.kind = kind;
+            p.title = "";
+            try {
+                fetchDetails(p);
+            } catch (Exception e) {
+                continue;
+            }
+            if (p.pkg != null && p.backdrop != null) out.add(p);
+        }
+        return out;
     }
 
     /** A list of just one of `list`, the one this hour's period points at (empty for an empty list). */
@@ -788,6 +823,7 @@ final class Recs {
 
     private long sourceStamp() {
         long stamp = ((key().hashCode() * 31L + REGION.hashCode()) * 31L + (Config.HIDE_ANIMATION ? 1 : 0)) * 31L + Config.PLEX_URL.hashCode();
+        stamp = stamp * 31L + (Trakt.connected(context) ? 1 : 0);   // connecting or disconnecting Trakt fetches again
         for (String[] service : SERVICES) stamp = stamp * 31L + (installed(service[2]) ? service[2].hashCode() : 0);
         return stamp;
     }

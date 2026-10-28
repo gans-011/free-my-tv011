@@ -28,6 +28,7 @@ Tudo o que o Free My TV original faz continua aqui. A novidade:
 - **← →** anda pela fileira, **↑ ↓** troca de fileira e **OK** abre o título no app que tem ele. **↑** na primeira fileira volta para a prateleira; **↓** na última abre a gaveta (clima, entradas, cotações).
 - Só aparecem títulos dos apps que você tem instalados. As fileiras se atualizam a cada 6 horas e os pôsteres ficam guardados na TV.
 - Precisa da [chave do TMDB](#a-chave-do-tmdb) (grátis). Sem ela, a tela inicial funciona normalmente, só sem as fileiras.
+- **Indicações do seu Trakt.** Com a sua conta do [Trakt](https://trakt.tv) conectada, a aba *Para você* (Explorar, Filmes e Séries) mostra o que o Trakt recomenda para você, a partir do que você assistiu e avaliou, em vez do que está em alta. Continuam aparecendo só títulos dos seus apps. Veja [Conectar o Trakt](#conectar-o-trakt).
 
 E o que já vinha do original:
 
@@ -141,12 +142,30 @@ O `config.properties` é criado no primeiro build. Quase tudo também dá para m
 | `show_crypto` | Mostra cotações de criptomoedas | `false` |
 | `currency` | Moeda das cotações | `BRL` |
 | `temperature` | `C`, `F` ou `auto` | `C` |
+| `trakt_client_id` | O Client ID do seu app no Trakt, para as indicações do Trakt | (seu Client ID) |
 
 As outras opções estão no [README original](README.en.md#settings).
 
 ### A chave do TMDB
 
 É grátis e leva dois minutos: crie uma conta em [themoviedb.org](https://www.themoviedb.org/signup), abra [Configurações → API](https://www.themoviedb.org/settings/api) e peça uma chave de desenvolvedor. Cole o *API Read Access Token* (ou a *API Key*) depois de `tmdb_key=`. A chave é sua: o `config.properties` nunca vai para o GitHub.
+
+### Conectar o Trakt
+
+Opcional. Faz a aba *Para você* mostrar as recomendações do Trakt para você. Não precisa instalar o app do Trakt na TV.
+
+1. **No PC**, abra [app.trakt.tv/settings/apps](https://app.trakt.tv/settings/apps) e crie um app:
+   - **App name:** `Free My TV` (qualquer nome serve)
+   - **App type:** **Development** (só você consegue entrar)
+   - **Redirect URIs:** `http://localhost/callback` (a TV não usa, mas o campo é obrigatório)
+   - **Allowed origins:** vazio
+2. Copie o **Client ID** que aparece e cole no `config.properties`, depois de `trakt_client_id=`. Os apps novos do Trakt não têm *Client Secret*, e não precisa.
+3. Gere o app de novo (`./build.sh`) e instale na TV (`adb install -r FreeMyTV.apk`).
+4. **Na TV:** *Free My TV* → *Ajustes do Início* → **Trakt** (quase no fim da lista) → **OK**. Aparece um código e um QR code.
+5. **No celular**, abra [trakt.tv/activate](https://trakt.tv/activate) e digite o código. A tela do Trakt mostra o nome do **seu** app pedindo acesso (se aparecer *Trakt for Android*, é o app oficial do Trakt, não o Free My TV).
+6. A TV avisa *"Trakt conectado"*. Em cerca de um minuto, a aba *Para você* passa a mostrar as suas recomendações.
+
+O que você assiste direto nos apps da TV não vai sozinho para o Trakt: as recomendações vêm do que está na sua conta (o que você marca e avalia no celular, no PC ou em apps ligados ao Trakt). Para desconectar, OK na mesma linha **Trakt**.
 
 ## Voltar ao original
 

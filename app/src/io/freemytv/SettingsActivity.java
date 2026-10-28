@@ -804,17 +804,26 @@ public class SettingsActivity extends Activity {
             l.add("Solana");
             if (dollar()) l.add(Ui.tr("Dollar"));
             l.add(Ui.tr("TMDB key"));
+            l.add("Trakt");
             l.add(Ui.tr("Updates"));
             return l.toArray(new String[0]);
         }
 
-        /** The Updates row: the last one, after the coins and the TMDB key. */
+        /** The Updates row: the last one, after the coins, the TMDB key and Trakt. */
         private int updatesRow() {
             return settingLabels().length - 1;
         }
 
         private int keyRow() {
+            return updatesRow() - 2;
+        }
+
+        private int traktRow() {
             return updatesRow() - 1;
+        }
+
+        private String traktValue() {
+            return !Trakt.available() ? "—" : Trakt.connected(getContext()) ? Ui.tr("Connected") : Ui.tr("Not connected");
         }
 
         /** The TMDB key row: "Not set", or the key's last 4 characters (all that's ever shown of it). */
@@ -852,8 +861,9 @@ public class SettingsActivity extends Activity {
             v[PLAYING_ROW] = onOff(Prefs.nowPlaying());
             v[QUOTES_ROW] = onOff(Prefs.quotes());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
-            for (int i = COIN_ROWS; i < v.length - 2; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
-            v[v.length - 2] = keyValue();
+            for (int i = COIN_ROWS; i < v.length - 3; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
+            v[v.length - 3] = keyValue();
+            v[v.length - 2] = traktValue();
             v[v.length - 1] = updatesValue();
             return v;
         }
@@ -1411,6 +1421,103 @@ public class SettingsActivity extends Activity {
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();   // one stray OK keeps it
         }
 
+        // MARK: - Trakt (a device code: the phone opens trakt.tv/activate and types it)
+
+        private volatile AlertDialog traktDialog;
+
+        private void askTrakt() {
+            Context c = getContext();
+            if (!Trakt.available()) {
+                Toast.makeText(c, Ui.tr("Add trakt_client_id to config.properties first."), Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (Trakt.connected(c)) {
+                AlertDialog dialog = new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                        .setTitle(Ui.tr("Disconnect Trakt?"))
+                        .setMessage(Ui.tr("The picks go back to what's trending."))
+                        .setPositiveButton(Ui.tr("Disconnect"), (d, which) -> {
+                            Trakt.disconnect(c);
+                            invalidate();
+                            spoken.focusMoved();
+                        })
+                        .setNegativeButton(Ui.tr("Cancel"), null)
+                        .show();
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();   // one stray OK keeps it
+                return;
+            }
+            if (traktDialog != null) return;
+            new Thread(() -> {
+                Trakt.Device d;
+                try {
+                    d = Trakt.start();
+                } catch (Exception e) {
+                    AppLog.w("trakt: " + e.getMessage());
+                    handler.post(() -> Toast.makeText(c, Ui.tr("Couldn't reach Trakt. Check the internet and try again."),
+                            Toast.LENGTH_LONG).show());
+                    return;
+                }
+                Bitmap qr = qrBitmap(Qr.encode(d.url));
+                handler.post(() -> showTraktCode(d, qr));
+                int result = Trakt.PENDING;
+                while (result == Trakt.PENDING) {
+                    try {
+                        Thread.sleep(d.interval * 1000L);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                    if (traktDialog == null) return;   // closed with Back or Cancel
+                    result = Trakt.poll(c, d);
+                }
+                boolean ok = result == Trakt.CONNECTED;
+                handler.post(() -> {
+                    AlertDialog shown = traktDialog;
+                    traktDialog = null;
+                    if (shown != null) shown.dismiss();
+                    Toast.makeText(c, ok ? Ui.tr("Trakt connected: the picks are now for you.") : Ui.tr("This code has expired."),
+                            Toast.LENGTH_LONG).show();
+                    invalidate();
+                    spoken.focusMoved();
+                });
+            }, "TraktSignIn").start();
+        }
+
+        private void showTraktCode(Trakt.Device d, Bitmap qr) {
+            if (!running) return;
+            Context c = getContext();
+            android.widget.LinearLayout box = new android.widget.LinearLayout(c);
+            box.setOrientation(android.widget.LinearLayout.VERTICAL);
+            box.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+            int pad = Math.round(24 * k);
+            box.setPadding(pad, pad, pad, pad);
+            android.widget.TextView steps = new android.widget.TextView(c);
+            steps.setText(Ui.trf("On your phone or computer, open {url} and type this code:", "url",
+                    d.url.replaceFirst("^https://", "")));
+            steps.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 28 * k);
+            steps.setGravity(android.view.Gravity.CENTER);
+            android.widget.TextView code = new android.widget.TextView(c);
+            code.setText(d.userCode);
+            code.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 72 * k);
+            code.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
+            code.setLetterSpacing(0.15f);
+            code.setPadding(0, pad, 0, pad);
+            android.widget.ImageView image = new android.widget.ImageView(c);
+            android.graphics.drawable.BitmapDrawable sharp = new android.graphics.drawable.BitmapDrawable(getResources(), qr);
+            sharp.setFilterBitmap(false);   // one pixel per module, scaled up: crisp squares, not a blur
+            image.setImageDrawable(sharp);
+            image.setScaleType(android.widget.ImageView.ScaleType.FIT_XY);
+            int side = Math.round(260 * k);
+            box.addView(steps);
+            box.addView(code);
+            box.addView(image, new android.widget.LinearLayout.LayoutParams(side, side));
+            traktDialog = new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(Ui.tr("Connect Trakt"))
+                    .setView(box)
+                    .setNegativeButton(Ui.tr("Cancel"), null)
+                    .setOnDismissListener(x -> traktDialog = null)
+                    .show();
+            announceForAccessibility(steps.getText() + " " + d.userCode);
+        }
+
         /** The rows, the code with the steps beside it, the address under it for a phone without a camera, and the status. */
         private void drawKey(Canvas c) {
             float x = LIST_X * k + 30 * k, pitch = LIST_ROW_H + LIST_ROW_GAP;
@@ -1752,6 +1859,7 @@ public class SettingsActivity extends Activity {
                     : Ui.tr("OK removes them; the arrows turn them on or off."))
                     : screen == POWER && powerRow() != P_SHOW && unavailable(focus) == null ? Ui.tr("OK opens the list. ← → change the value.")
                     : screen == HOME_SETTINGS && from + focus == keyRow() ? Ui.tr("OK: send it from your phone, or type it.")
+                    : screen == HOME_SETTINGS && from + focus == traktRow() ? Ui.tr("OK: your Trakt recommendations become the picks.")
                     : screen == HOME_SETTINGS && from + focus == updatesRow() ? (Updates.ready(updates, installed)
                     ? Ui.tr("OK installs it; Android asks first.") : Ui.tr("OK checks for a new version."))
                     : Ui.tr("OK or the arrows change the value.")), LIST_X * k + 30 * k, hy, hint);
@@ -1819,6 +1927,9 @@ public class SettingsActivity extends Activity {
                 return;
             } else if (screen == HOME_SETTINGS && pickScroll + focus == updatesRow()) {
                 updateNow();
+                return;
+            } else if (screen == HOME_SETTINGS && pickScroll + focus == traktRow()) {
+                askTrakt();
                 return;
             } else if (screen == HOME_SETTINGS && pickScroll + focus == keyRow()) {
                 openKeyScreen();
