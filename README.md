@@ -52,7 +52,7 @@ Uns 15 minutos. Você precisa de uma TV com Google TV ou Android TV (Android 8 o
    com tudo que essa versão tem: as fileiras de pôsteres, as indicações e o "Continue
    assistindo" do Trakt.
 
-   - IP da TV: [192.168.1.50]
+   - IP da TV: [o IP da sua TV]
    - Minha cidade: [São Paulo]
    - Meu computador: [Windows]
    - Trakt: [sim, quero conectar a minha conta]
@@ -116,10 +116,10 @@ export ANDROID_HOME="C:/Users/<você>/android-sdk"
 
 A primeira vez cria o `config.properties`. Abra ele, coloque a sua cidade e a sua [chave do TMDB](#a-chave-do-tmdb) (veja [Configurações](#configurações)) e rode `./build.sh` de novo. Tem que terminar com `Built FreeMyTV.apk`.
 
-**6. Instale na TV:**
+**6. Instale na TV.** Troque `IP_DA_SUA_TV` pelo IP que você anotou no passo 1 (Configurações → Rede e Internet na TV):
 
 ```bash
-adb connect 192.168.1.50:5555
+adb connect IP_DA_SUA_TV:5555
 adb install -r FreeMyTV.apk
 ```
 
@@ -136,7 +136,7 @@ adb shell "appops set io.freemytv AUTO_START allow || appops set io.freemytv APP
 **7. Troque a tela inicial, na TV.** Antes, desconecte o computador (no Android 8 a 10 a TV pode mandar a resposta para ele):
 
 ```bash
-adb disconnect 192.168.1.50:5555
+adb disconnect IP_DA_SUA_TV:5555
 ```
 
 Depois, na TV: *Free My TV* → *Início* → *Free My TV*. A TV pergunta *Permitir depuração USB?* mais uma vez, agora para o próprio Free My TV: marque *Sempre permitir* e aceite.
@@ -148,7 +148,7 @@ Pronto. Aperte **Home** no controle e depois **↓** para ver as fileiras.
 ```bash
 git pull
 ./build.sh
-adb connect 192.168.1.50:5555
+adb connect IP_DA_SUA_TV:5555
 adb install -r FreeMyTV.apk
 ```
 
