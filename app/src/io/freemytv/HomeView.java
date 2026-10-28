@@ -116,6 +116,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // Poster rows (↓ from the shelf, like the Apple TV app): everything above moves up out of the way and the rows
     // scroll one at a time; the focused row keeps its title near the top. Measured in the 1920×1080 space.
     private static final float ROWS_FIRST = 150, ROW_STEP = 610, POSTER_W = 220, POSTER_H = 330, POSTER_GAP = 34;
+    private static final float WIDE_W = 400, WIDE_H = 225;   // Continue watching: 16:9, four on screen like Apple TV's Up Next
     private static final float POSTER_RADIUS = 18, POSTER_GROW = 0.1f;
     private List<Rows.Row> rowList = new ArrayList<>();
     private final Spring rowsOpen = new Spring(0.5f, 0.92f, 0);
@@ -591,11 +592,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         List<Rows.Row> list = rowsData.rows();
         boolean same = list.size() == rowList.size();
         for (int i = 0; same && i < list.size(); i++) {
-            same = list.get(i).items.size() == rowList.get(i).items.size()
+            same = list.get(i).wide == rowList.get(i).wide && list.get(i).items.size() == rowList.get(i).items.size()
                     && Rows.key(list.get(i).items.get(0)).equals(Rows.key(rowList.get(i).items.get(0)));
             // Continue watching changes in place: a new next episode is a new list.
             for (int j = 0; same && j < list.get(i).items.size(); j++) {
-                same = list.get(i).items.get(j).next.equals(rowList.get(i).items.get(j).next);
+                same = list.get(i).items.get(j).next.equals(rowList.get(i).items.get(j).next)
+                        && list.get(i).items.get(j).still.equals(rowList.get(i).items.get(j).still);
             }
         }
         if (!same) {
@@ -674,10 +676,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return true;
     }
 
+    /** A row's card width: Continue watching's 16:9 cards (WIDE_W) or posters (POSTER_W). */
+    private float cardW(int row) {
+        return row < rowList.size() && rowList.get(row).wide ? WIDE_W : POSTER_W;
+    }
+
     private void aimRows() {
         rowScroll.target = rowIndex * ROW_STEP;
-        float step = POSTER_W + POSTER_GAP, room = CONTENT_R - MARGIN;
+        float room = CONTENT_R - MARGIN;
         for (int i = 0; i < rowSlide.length; i++) {
+            float step = cardW(i) + POSTER_GAP;
             int n = rowList.get(i).items.size();
             float max = Math.max(0, n * step - POSTER_GAP - room);
             // The focused poster stays in the first columns while the row slides, like tvOS.
@@ -694,8 +702,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Where a poster rests on the screen (without the focus growth). */
     private RectF posterBounds(int row, int col, RectF out) {
         float top = (ROWS_FIRST + row * ROW_STEP - rowScroll.value + 64) * k;
-        float left = (MARGIN + col * (POSTER_W + POSTER_GAP) - (row < rowSlide.length ? rowSlide[row].value : 0)) * k;
-        out.set(left, top, left + POSTER_W * k, top + POSTER_H * k);
+        float cw = cardW(row), ch = cw == WIDE_W ? WIDE_H : POSTER_H;
+        float left = (MARGIN + col * (cw + POSTER_GAP) - (row < rowSlide.length ? rowSlide[row].value : 0)) * k;
+        out.set(left, top, left + cw * k, top + ch * k);
         return out;
     }
 
@@ -758,6 +767,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             posterFill.setColor(WHITE);
             c.drawRoundRect(x0, y, x0 + Math.max(bar, (x1 - x0) * it.progress), y + bar, bar / 2, bar / 2, posterFill);
         }
+        if (f <= 0.01f && !it.next.isEmpty()) {
+            // Continue watching: every card names its show and episode under it, as Up Next does (a scene alone
+            // doesn't say which show). The cut title is kept, not made again on every frame.
+            float room = posterRect.width();
+            if (it.label == null || it.labelRoom != room || it.labelGeneration != Ui.generation) {
+                it.label = TextUtils.ellipsize(it.title, posterTitle, room, TextUtils.TruncateAt.END).toString();
+                it.labelRoom = room;
+                it.labelGeneration = Ui.generation;
+            }
+            c.drawText(it.label, posterRect.left, posterRect.bottom + 34 * k, posterTitle);
+            c.drawText(it.next, posterRect.left, posterRect.bottom + 64 * k, posterMeta);
+        }
         if (f > 0.01f) {
             rim.setColor(Ui.alpha(0xFFFFFFFF, 0.9f * f));
             c.drawRoundRect(posterRect, radius, radius, rim);
@@ -777,7 +798,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // The synopsis, up to three lines, kept on screen even for a poster near the right edge.
             if (it.overview != null && !it.overview.isEmpty()) {
                 float width = 820 * k;
-                float x = Math.max(MARGIN * k, Math.min(posterRect.left, CONTENT_R * k - width));
+                // Under the title, even when the grown first card starts left of the margin.
+                float x = Math.max(Math.min(MARGIN * k, posterRect.left), Math.min(posterRect.left, CONTENT_R * k - width));
                 posterOverview.setAlpha(Math.round(230 * f));
                 StaticLayout layout = StaticLayout.Builder.obtain(it.overview, 0, it.overview.length(), posterOverview, Math.round(width))
                         .setMaxLines(3).setEllipsize(TextUtils.TruncateAt.END).setLineSpacing(4 * k, 1).build();

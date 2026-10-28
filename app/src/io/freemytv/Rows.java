@@ -38,6 +38,10 @@ final class Rows {
         int id;
         String kind, title, poster, pkg, app, service, date = "", overview = "";
         String next = "";   // Continue watching: the next episode ("S2 E5"), else empty
+        String still = "";  // Continue watching: the next episode's scene (or the show's backdrop), a TMDB path
+        String label;       // HomeView's cut title under a card, and what it was cut for (not saved)
+        float labelRoom;
+        int labelGeneration;
         float progress;     // Continue watching: how much of what aired you've seen, 0 to 1
         double popularity, vote;
         int votes;
@@ -45,12 +49,14 @@ final class Rows {
 
     static final class Row {
         String title;
+        boolean wide;   // Continue watching: 16:9 cards with the next episode's scene, like Apple TV's Up Next
         final List<Item> items = new ArrayList<>();
     }
 
     interface Listener { void onRows(); }
 
     private static final String POSTERS = "https://image.tmdb.org/t/p/w342";
+    private static final String STILLS = "https://image.tmdb.org/t/p/w500";   // a 400 px card, pixel for pixel at 1080p
     private static final long EVERY = 6 * 3600_000L;
     private static final int PER_ROW = 20;
     private static final int VERSION = 3;
@@ -115,6 +121,7 @@ final class Rows {
         if (!mine.isEmpty() && Trakt.connected(context)) {
             Row r = new Row();
             r.title = Ui.tr("Continue watching");
+            r.wide = true;
             for (Item it : mine) if (it.pkg == null || it.pkg.isEmpty() || have.computeIfAbsent(it.pkg, recs::installed)) r.items.add(it);
             if (!r.items.isEmpty()) out.add(r);
         }
@@ -223,11 +230,15 @@ final class Rows {
                 it.app = Recs.serviceName(appOnly(s[1]));
             }
         }
-        // The episode in the TV's language: its name, then what it's about.
+        String backdrop = o.optString("backdrop_path", "");
+        it.still = backdrop.isEmpty() || "null".equals(backdrop) ? "" : backdrop;
+        // The episode in the TV's language: its name, then what it's about, and its scene for the card.
         try {
             JSONObject e = recs.get("/tv/" + w.tmdb + "/season/" + w.season + "/episode/" + w.number + "?language=" + lang);
             String name = e.optString("name", "").trim(), about = e.optString("overview", "").trim();
             it.overview = name.isEmpty() ? about : about.isEmpty() ? name : name + " — " + about;
+            String still = e.optString("still_path", "");
+            if (!still.isEmpty() && !"null".equals(still)) it.still = still;
         } catch (Exception e) {
             it.overview = "";
         }
@@ -344,22 +355,25 @@ final class Rows {
 
     // MARK: - Posters
 
-    /** The decoded poster, or null: loads it in the background and notifies when it's ready. */
+    /** The decoded poster (a wide card's scene), or null: loads it in the background and notifies when it's ready. */
     Bitmap poster(Item it) {
-        if (it.poster == null || it.poster.isEmpty()) return null;
-        Bitmap b = bitmaps.get(it.poster);
+        boolean wide = it.still != null && !it.still.isEmpty();
+        String image = wide ? it.still : it.poster;
+        if (image == null || image.isEmpty()) return null;
+        final String base = wide ? STILLS : POSTERS, path = image;
+        final String key = (wide ? "w500" : "") + path;   // the same TMDB path at another size is another image
+        Bitmap b = bitmaps.get(key);
         if (b != null) return b;
-        final String path = it.poster;
-        if (!loading.add(path)) return null;
+        if (!loading.add(key)) return null;
         images.execute(() -> {
             try {
-                File f = new File(new File(context.getCacheDir(), "posters"), path.replace("/", ""));
-                if (!f.exists()) download(path, f);
+                File f = new File(new File(context.getCacheDir(), "posters"), key.replace("/", ""));
+                if (!f.exists()) download(base, path, f);
                 BitmapFactory.Options o = new BitmapFactory.Options();
                 o.inPreferredConfig = Bitmap.Config.RGB_565;
                 Bitmap bmp = BitmapFactory.decodeFile(f.getPath(), o);
                 if (bmp != null) {
-                    bitmaps.put(path, bmp);
+                    bitmaps.put(key, bmp);
                     notifyListeners();
                 } else {
                     //noinspection ResultOfMethodCallIgnored
@@ -368,17 +382,17 @@ final class Rows {
             } catch (Exception e) {
                 AppLog.w("rows: poster: " + e.getMessage());
             } finally {
-                loading.remove(path);
+                loading.remove(key);
             }
         });
         return null;
     }
 
-    private static void download(String path, File f) throws IOException {
+    private static void download(String base, String path, File f) throws IOException {
         //noinspection ResultOfMethodCallIgnored
         f.getParentFile().mkdirs();
         File part = new File(f.getPath() + ".part");
-        HttpURLConnection c = (HttpURLConnection) new URL(POSTERS + path).openConnection();
+        HttpURLConnection c = (HttpURLConnection) new URL(base + path).openConnection();
         c.setConnectTimeout(8000);
         c.setReadTimeout(15000);
         try {
@@ -418,7 +432,7 @@ final class Rows {
                 items.put(new JSONObject().put("id", it.id).put("kind", it.kind).put("title", it.title)
                         .put("poster", it.poster).put("pkg", it.pkg).put("app", it.app).put("date", it.date)
                         .put("vote", it.vote).put("overview", it.overview).put("service", it.service)
-                        .put("next", it.next).put("progress", it.progress));
+                        .put("next", it.next).put("progress", it.progress).put("still", it.still));
             }
             a.put(new JSONObject().put("title", r.title).put("items", items));
         }
@@ -449,6 +463,7 @@ final class Rows {
                 it.service = x.optString("service");
                 it.next = x.optString("next");
                 it.progress = (float) x.optDouble("progress", 0);
+                it.still = x.optString("still");
                 r.items.add(it);
             }
             out.add(r);
