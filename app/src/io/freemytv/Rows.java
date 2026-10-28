@@ -171,7 +171,7 @@ final class Rows {
         io.execute(() -> {
             try {
                 List<Item> list = new ArrayList<>();
-                for (Trakt.Watching w : Trakt.watching(context, PER_ROW)) {
+                for (Trakt.Watching w : Trakt.watching(context, 40)) {   // all of Up Next, not just a row's 20
                     try {
                         list.add(watchingItem(w));
                     } catch (Exception e) {

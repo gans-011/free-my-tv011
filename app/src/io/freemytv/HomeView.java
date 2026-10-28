@@ -384,6 +384,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             playing.start();   // the listener allowed after the screen showed (a no-op once watching)
             data.refreshIfStale();
             recs.refreshIfStale();
+            rowsData.refreshIfStale();   // Continue watching every 15 minutes, the other rows every 6 hours
             checkNotices();
             updatePalette();
             checkNight(true);

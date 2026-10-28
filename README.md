@@ -29,7 +29,7 @@ Tudo o que o Free My TV original faz continua aqui. A novidade:
 - Só aparecem títulos dos apps que você tem instalados. As fileiras se atualizam a cada 6 horas e os pôsteres ficam guardados na TV.
 - Precisa da [chave do TMDB](#a-chave-do-tmdb) (grátis). Sem ela, a tela inicial funciona normalmente, só sem as fileiras.
 - **Indicações do seu Trakt.** Com a sua conta do [Trakt](https://trakt.tv) conectada, a aba *Para você* (Explorar, Filmes e Séries) mostra o que o Trakt recomenda para você, a partir do que você assistiu e avaliou, em vez do que está em alta. Continuam aparecendo só títulos dos seus apps. Veja [Conectar o Trakt](#conectar-o-trakt).
-- **Continue assistindo.** Com o Trakt conectado, a primeira fileira de pôsteres mostra as séries que você está acompanhando (as que viu no último ano e ainda têm episódio, e as da sua lista), com uma barrinha de quanto você já viu. No pôster selecionado aparece *Próximo: T2 E5* e o resumo do episódio. Séries que você abandonou (*Drop*) ou ocultou no Trakt não aparecem. Atualiza a cada 15 minutos.
+- **Continue assistindo.** Com o Trakt conectado, a primeira fileira de pôsteres mostra o seu *Up Next* do Trakt, as mesmas séries e na mesma ordem do site, com uma barrinha de quanto você já viu. No pôster selecionado aparece *Próximo: T2 E5* e o resumo do episódio. Séries que você abandonou (*Drop*) ou ocultou no Trakt não aparecem. Atualiza a cada 15 minutos.
 
 E o que já vinha do original:
 

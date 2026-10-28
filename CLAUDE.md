@@ -59,7 +59,7 @@ before you do it, and let them do the taps on the TV.
    And for `plex_url` and `plex_token` (Google TV only; their Plex server's newest titles join the picks): the token opens
    their Plex account, so suggest a Plex Home managed user's (the README says how), and it goes only in `config.properties`.
    **Trakt (this fork, optional):** their Trakt recommendations become the For You picks, and the poster rows start with
-   *Continue watching* (shows they follow, their watchlist; dropped or hidden shows left out). They create an app at
+   *Continue watching* (their Up Next, `/sync/progress/up_next`: as trakt.tv lists it, without dropped or hidden shows). They create an app at
    app.trakt.tv/settings/apps: type *Development*, redirect URI `http://localhost/callback` (unused: the TV signs in
    with a device code), no allowed origins. New Trakt apps issue only a Client ID, no secret, and none is needed; it
    goes after `trakt_client_id=` in `config.properties`, pasted by them. After installing, they connect on the TV:
