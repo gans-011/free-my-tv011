@@ -42,7 +42,11 @@ before you do it, and let them do the taps on the TV.
    - macOS: `brew install --cask temurin android-commandlinetools android-platform-tools`, then
      `sdkmanager "build-tools;34.0.0" "platforms;android-34"`.
    - Linux: OpenJDK 17, Android's command-line tools and adb from the package manager, then the same `sdkmanager` line.
-   - Windows: Git Bash (what Claude Code runs there; `build.sh` handles it) or WSL, then as on Linux.
+   - Windows: Git Bash (what Claude Code runs there; `build.sh` handles it) or WSL, then as on Linux. `winget install
+     EclipseAdoptium.Temurin.17.JDK Google.PlatformTools` gives the JDK and adb; unzip Android's command-line tools into
+     `<home>/android-sdk/cmdline-tools/latest` and run its `sdkmanager.bat --sdk_root=...`. Set `ANDROID_HOME` as
+     `C:/Users/<name>/android-sdk`: with `/c/Users/...` javac gets a path it can't read and fails with
+     `Unable to find method metafactory`.
 3. **Settings:** run `./build.sh` once; it creates `config.properties`. Fill in `latitude` and `longitude` (decimal
    degrees) and `city` for their city, `tmdb_region` (two-letter country), `show_crypto`, `currency` and `temperature` to match.
 4. **The TMDB key is theirs and secret.** Ask them to create one (free: themoviedb.org → Settings → API) and paste it
@@ -54,6 +58,15 @@ before you do it, and let them do the taps on the TV.
    The same goes for the optional `watchmode_key` (free, watchmode.com; makes picks open the title's page): theirs, secret, only in `config.properties`.
    And for `plex_url` and `plex_token` (Google TV only; their Plex server's newest titles join the picks): the token opens
    their Plex account, so suggest a Plex Home managed user's (the README says how), and it goes only in `config.properties`.
+   **Trakt (this fork, optional):** their Trakt recommendations become the For You picks, and the poster rows start with
+   *Continue watching* (shows they follow, their watchlist; dropped or hidden shows left out). They create an app at
+   app.trakt.tv/settings/apps: type *Development*, redirect URI `http://localhost/callback` (unused: the TV signs in
+   with a device code), no allowed origins. New Trakt apps issue only a Client ID, no secret, and none is needed; it
+   goes after `trakt_client_id=` in `config.properties`, pasted by them. After installing, they connect on the TV:
+   Home Settings > Trakt > OK shows a code for trakt.tv/activate on their phone. Not the *Trakt for Android* app from
+   the Play Store: that one signs its own app in, not Free My TV (its approval page says "Trakt for Android"). Check
+   with `adb logcat -s FreeMyTV`: `trakt: connected`, `trakt: N movies and M shows for you…`, `trakt: N shows to
+   continue` (the picks come within a minute of the next Home). The tokens stay in the app's `trakt.json`, never logged.
 5. **Build:** `./build.sh` → `FreeMyTV.apk`. Keep `freemytv.keystore`: updates must be signed with the same key.
 6. **Install:** `adb connect <IP>:5555`. The TV asks *Allow USB debugging?*: tell them to accept and tick *Always
    allow*. Then `adb install -r FreeMyTV.apk`. If it hangs, Google Play Protect is asking on the TV (Android 14:

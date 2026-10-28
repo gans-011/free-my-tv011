@@ -45,11 +45,36 @@ Uns 15 minutos. Você precisa de uma TV com Google TV ou Android TV (Android 8 o
 ### Jeito fácil: com um assistente de IA
 
 1. **Na TV**, ligue o modo de desenvolvedor: Configurações → Sistema → Sobre → aperte *Versão do SO do Android TV* 7 vezes. Depois Configurações → Sistema → Opções do desenvolvedor → ligue a **Depuração USB**. Anote o IP da TV (Configurações → Rede e Internet).
-2. **No computador**, abra o [Claude Code](https://claude.com/claude-code) e diga:
-   > Instale o Free My TV (github.com/gans-011/free-my-tv011) na minha TV no IP 192.168.1.50. Eu moro em São Paulo.
+2. **No computador**, abra o [Claude Code](https://claude.com/claude-code), copie o prompt abaixo, troque o que está entre `[colchetes]` e cole:
 
-   Ele baixa o código, instala o que falta, gera o app e coloca na TV, e pergunta antes de qualquer coisa importante. Troque pelo IP da sua TV e pela sua cidade.
-3. **Na TV**, abra *Free My TV* → *Início* → *Free My TV*. A TV pergunta *Permitir depuração USB?*: marque *Sempre permitir* e aceite.
+   ```text
+   Quero instalar o Free My TV 011 (https://github.com/gans-011/free-my-tv011) na minha TV,
+   com tudo que essa versão tem: as fileiras de pôsteres, as indicações e o "Continue
+   assistindo" do Trakt.
+
+   - IP da TV: [192.168.1.50]
+   - Minha cidade: [São Paulo]
+   - Meu computador: [Windows]
+   - Trakt: [sim, quero conectar a minha conta]
+
+   Me guie do começo ao fim, em português, um passo de cada vez:
+   1. Baixe o código e leia o CLAUDE.md antes de qualquer coisa.
+   2. Veja o que já tenho instalado (Java 17, Android SDK, adb) e instale só o que faltar.
+   3. Crie o config.properties com a minha cidade, país BR, temperatura em °C e moeda BRL.
+   4. Me explique como criar a minha chave do TMDB e o meu app no Trakt, e me avise
+      quando colar cada um no config.properties. Eu mesmo colo: não vou mandar no chat.
+   5. Gere o app e instale na TV. Me diga o que aparece na tela e o que eu aperto.
+   6. Me explique o que muda na TV antes de eu trocar a tela inicial, e como voltar ao
+      original.
+   7. Me guie para conectar o Trakt na TV e confira pelo registro da TV se as indicações
+      e o "Continue assistindo" chegaram.
+
+   Pergunte antes de qualquer coisa importante e não mude nada na TV sem me avisar.
+   ```
+
+   Ele baixa o código, instala o que falta, gera o app, coloca na TV e te guia na conexão do Trakt. As chaves são suas: você cola no `config.properties` e elas nunca vão para o chat nem para o GitHub. Se não quiser o Trakt, troque a última linha da lista por `Trakt: não`.
+3. **Na TV**, quando ele pedir: abra *Free My TV* → *Início* → *Free My TV*. A TV pergunta *Permitir depuração USB?*: marque *Sempre permitir* e aceite.
+4. **Trakt (opcional):** *Free My TV* → *Ajustes do Início* → **Trakt** → **OK**, e digite o código em [trakt.tv/activate](https://trakt.tv/activate) no celular. Detalhes em [Conectar o Trakt](#conectar-o-trakt).
 
 ### Jeito manual (Windows)
 
